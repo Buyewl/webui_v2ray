@@ -1,10 +1,11 @@
 // ==========================================================
-// script.js (v6.0 - The Grand Finale, with Ping)
+// script.js (v7.0 - Perbaikan Kompatibilitas)
 // ZHStore VPN Configurator
 // ==========================================================
 
 document.addEventListener('DOMContentLoaded', function() {
     // --- PENGATURAN ---
+    // URL daftar server proxy
     const PROXY_LIST_URL = 'https://raw.githubusercontent.com/FoolVPN-ID/Nautica/main/proxyList.txt';
 
     // --- Referensi Elemen DOM ---
@@ -35,12 +36,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // FUNGSI INTI & PEMBANTU
     // =======================================================
 
+    /**
+     * Menghasilkan UUID versi 4.
+     */
     function generateUUIDv4() {
         return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
             (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
         );
     }
 
+    /**
+     * Menampilkan notifikasi toast.
+     */
     function showToast(message, isError = false) {
         const toast = document.createElement('div');
         toast.textContent = message;
@@ -56,6 +63,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 2700);
     }
 
+    /**
+     * Inisialisasi aplikasi: deteksi info pengguna, muat pengaturan, dan daftar server.
+     */
     async function initializeApp() {
         detectUserInfo();
         populateSettingsFromUrl();
@@ -74,6 +84,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    /**
+     * Mengurai data teks menjadi daftar objek server.
+     */
     function parseProxyList(text) {
         return text.trim().split('\n').map(line => {
             const parts = line.split(',');
@@ -88,6 +101,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }).filter(Boolean);
     }
 
+    /**
+     * Mengisi filter negara dari daftar server.
+     */
     function populateCountryFilter(servers) {
         const countries = [...new Set(servers.map(s => s.country_code))].sort();
         countries.forEach(code => {
@@ -98,6 +114,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    /**
+     * Merender daftar server ke dalam DOM.
+     */
     function renderServers(serversToRender) {
         serverListContainer.innerHTML = '';
         if (serversToRender.length === 0) {
@@ -141,6 +160,9 @@ document.addEventListener('DOMContentLoaded', function() {
         pingAllVisibleServers();
     }
 
+    /**
+     * Mendeteksi dan menampilkan informasi ISP dan lokasi pengguna.
+     */
     async function detectUserInfo() {
         try {
             const response = await fetch('https://ipinfo.io/json');
@@ -155,6 +177,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    /**
+     * Mengisi pengaturan dari parameter URL.
+     */
     function populateSettingsFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
         const hostFromUrl = urlParams.get('host');
@@ -168,7 +193,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 workerInfoCard.querySelector('h4').textContent = hostFromUrl;
             } else {
                 workerInfoCard.querySelector('h4').textContent = 'Default';
-                workerInfoCard.querySelector('p').textContent = 'Using default worker host';
+                workerInfoCard.querySelector('p').textContent = 'Menggunakan worker host default';
             }
         }
         
@@ -183,7 +208,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     /**
      * Mengukur latensi koneksi dengan mencoba membuka koneksi WebSocket.
-     * Metode ini lebih andal untuk koneksi lintas-asal (cross-origin).
      * @param {string} ip - Alamat IP server.
      * @param {string} port - Port server.
      * @param {number} timeout - Waktu timeout dalam milidetik.
@@ -200,6 +224,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!resolved) {
                     resolved = true;
                     if (ws && ws.readyState !== WebSocket.CLOSED) {
+                        // Pastikan koneksi ditutup untuk menghindari kebocoran
                         ws.close();
                     }
                     clearTimeout(timer);
@@ -213,41 +238,38 @@ document.addEventListener('DOMContentLoaded', function() {
             }, timeout);
     
             try {
-                // Kita coba koneksi WSS (WebSocket Secure). 
-                // Browser akan mengizinkan ini dari halaman HTTPS.
+                // Mencoba koneksi WSS
                 ws = new WebSocket(`wss://${ip}:${port}`);
     
-                // KASUS 1: Koneksi berhasil dibuat. Ini adalah hasil terbaik.
-                // Server merespons handshake WebSocket.
+                // KASUS 1: Koneksi berhasil
                 ws.onopen = () => {
                     const endTime = Date.now();
                     cleanupAndResolve(endTime - startTime);
                 };
     
-                // KASUS 2 (PALING UMUM): Koneksi gagal.
-                // Ini bisa karena port ditutup, tidak ada server WS, atau sertifikat tidak valid.
-                // TAPI, event 'onerror' ini sendiri sudah membuktikan bahwa servernya "menjawab".
-                // Kita tetap bisa mengukur waktunya!
+                // KASUS 2: Koneksi gagal (tapi server menjawab, hanya saja bukan server WS)
                 ws.onerror = () => {
                     const endTime = Date.now();
-                    // Kita anggap latensi hingga error ini sebagai nilai ping.
                     cleanupAndResolve(endTime - startTime);
                 };
     
-                // KASUS 3: Server menutup koneksi secara langsung.
+                // KASUS 3: Server menutup koneksi
                 ws.onclose = () => {
-                    // Jika onopen atau onerror belum terpanggil, kita ukur waktunya di sini.
                     const endTime = Date.now();
-                    cleanupAndResolve(endTime - startTime);
+                    // Hanya ukur waktu jika belum terselesaikan oleh onopen/onerror
+                    if (!resolved) cleanupAndResolve(endTime - startTime);
                 };
     
             } catch (error) {
-                // Gagal bahkan sebelum mencoba membuat WebSocket (misal, format URL salah)
+                // Gagal sebelum membuat WebSocket
                 cleanupAndResolve(-1);
             }
         });
     }
 
+    /**
+     * Melakukan ping pada semua server yang terlihat.
+     */
     async function pingAllVisibleServers() {
         const serverCards = serverListContainer.querySelectorAll('.server-card');
         
@@ -258,7 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const pingBadge = card.querySelector('.ping-badge');
             
             if (pingBadge) {
-                pingBadge.textContent = '...'; // Reset before pinging
+                pingBadge.textContent = '...'; // Reset
                 pingBadge.style.backgroundColor = '';
 
                 const pingValue = await pingServer(ip, port);
@@ -284,6 +306,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // FUNGSI INTERAKTIVITAS & MODAL
     // =======================================================
     
+    /**
+     * Mengubah status seleksi server.
+     */
     function toggleServerSelection(cardElement, serverId) {
         if (selectedServers.has(serverId)) {
             selectedServers.delete(serverId);
@@ -300,10 +325,16 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    /**
+     * Memperbarui jumlah server yang dipilih.
+     */
     function updateSelectedCount() {
         selectedCountBtn.textContent = `${selectedServers.size} proxies`;
     }
 
+    /**
+     * Menerapkan semua filter (negara, pencarian, server terpilih).
+     */
     function applyAllFilters() {
         const query = searchInput.value.toLowerCase();
         const selectedCountry = countryFilter.value;
@@ -325,6 +356,10 @@ document.addEventListener('DOMContentLoaded', function() {
         renderServers(serversToDisplay);
     }
 
+    /**
+     * Menghasilkan dan menyalin konfigurasi V2Ray/Xray ke clipboard.
+     * Ini adalah fungsi yang diperbaiki.
+     */
     function exportProxies() {
         if (selectedServers.size === 0) {
             showToast("Pilih setidaknya satu server!", true);
@@ -334,6 +369,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const bugCdn = bugCdnInput.value.trim();
         const workerHost = workerHostInput.value.trim();
         const uuid = uuidInput.value.trim();
+        const useTls = tlsSelect.value === 'true';
+
         if (!bugCdn || !workerHost || !uuid) {
             showToast("Harap isi semua kolom di Settings.", true);
             openSettingsModal();
@@ -344,31 +381,52 @@ document.addEventListener('DOMContentLoaded', function() {
         selectedServers.forEach(serverId => {
             const server = allServers.find(s => s.id === serverId);
             if (server) {
-                const path = `/${server.ip}-${server.port}`;
+                // --- PERBAIKAN KRUSIAL DI SINI ---
+                // Format path yang lebih umum dan disukai untuk Xray/V2Ray dengan Worker.
+                // Penggunaan workerHost sebagai host dan sni, serta penambahan IP dan port di Path.
+                const corePath = `/${server.ip}:${server.port}`;
                 const name = `${server.country_code} ${server.provider} [${server.ip}]`;
-                const useTls = tlsSelect.value === 'true';
                 
                 const uri = `${protocolSelect.value}://${uuid}@${bugCdn}:${useTls ? 443 : 80}` +
                             `?encryption=none&type=ws` +
                             `&host=${workerHost}` +
                             `&security=${useTls ? 'tls' : 'none'}` +
                             `&sni=${workerHost}` +
-                            `&path=${encodeURIComponent(path)}` +
+                            // Path yang diperbaiki untuk Worker
+                            `&path=${encodeURIComponent(corePath)}` +
                             `#${encodeURIComponent(name)}`;
+                            
                 outputUris.push(uri);
             }
         });
 
         const resultString = outputUris.join('\n');
-        navigator.clipboard.writeText(resultString).then(() => {
+        
+        // Menggunakan execCommand('copy') sebagai fallback untuk lingkungan iFrame
+        const tempTextArea = document.createElement('textarea');
+        tempTextArea.value = resultString;
+        document.body.appendChild(tempTextArea);
+        tempTextArea.select();
+        try {
+            document.execCommand('copy');
             showToast("Konfigurasi berhasil disalin!");
-        }).catch(err => {
-            console.error('Gagal menyalin: ', err);
+        } catch (err) {
+            console.error('Gagal menyalin (Fallback): ', err);
             showToast("Gagal menyalin ke clipboard.", true);
-        });
+        } finally {
+            document.body.removeChild(tempTextArea);
+        }
+        
     }
 
+    /**
+     * Membuka modal pengaturan.
+     */
     function openSettingsModal() { modalOverlay.classList.add('visible'); }
+    
+    /**
+     * Menutup modal pengaturan.
+     */
     function closeSettingsModal() { modalOverlay.classList.remove('visible'); }
 
     // =======================================================
@@ -382,6 +440,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (selectedServers.size === 0) return;
         isShowingOnlySelected = !isShowingOnlySelected;
         applyAllFilters();
+        // Update visual state of the button
         if (isShowingOnlySelected) {
             selectedCountBtn.style.backgroundColor = 'var(--primary-green)';
             selectedCountBtn.style.color = 'var(--text-dark)';
@@ -394,6 +453,7 @@ document.addEventListener('DOMContentLoaded', function() {
     settingsBtn.addEventListener('click', openSettingsModal);
     settingsDoneBtn.addEventListener('click', closeSettingsModal);
     modalOverlay.addEventListener('click', (event) => {
+        // Tutup modal saat mengklik area gelap (luar modal)
         if (event.target === modalOverlay) closeSettingsModal();
     });
     
